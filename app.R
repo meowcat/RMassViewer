@@ -80,7 +80,8 @@ server <- function(input, output, session) {
   
   observe({
     input$rtSave
-    save(cpdLimits, file="results/cpdLimits.RData")
+    if(input$rtSave > 0)
+      save(cpdLimits, file="results/cpdLimits.RData")
   })
 
   
@@ -88,7 +89,7 @@ server <- function(input, output, session) {
   observe({
     # Update on changed compound and on loading the RT list
     input$cpd
-    input$rtLoad
+    input$rtLoaded
     #input$rangeSel
     
     row <- as.integer(input$cpd)
@@ -98,7 +99,7 @@ server <- function(input, output, session) {
    
     if(all(!is.na(cpdLimits[row, c("rtMin", "rtMax", "rtPeak")])))
     {
-      print("updatin'")
+      print("updating")
       xlim.cpd <- cpdLimits[row, c("rtMin", "rtMax")]
       print("xlim.cpd")
       print(xlim.cpd)
@@ -107,7 +108,7 @@ server <- function(input, output, session) {
     }
     else
     {
-      print("not updatin'")
+      print("not updating")
       updateSliderInput(session,"rtLimits",min=xlim.eic[[1]], max=xlim.eic[[2]], value=xlim.eic)
       updateSliderInput(session,"rtPeak",min=xlim.eic[[1]], max=xlim.eic[[2]], value=mean(xlim.eic))  
     }
@@ -115,20 +116,30 @@ server <- function(input, output, session) {
   })
   
 
+  pool <- reactiveValues()
+  pool$rtLoaded <- 0
+  
   # load/save compound limits
   observe({
     input$rtLoad
-    print("rtload happened")
-    file <- "results/cpdLimits.RData"
-    cpdLimits <- cpdList[,c(),drop=FALSE]
-    cpdLimits$rtMin <- NA
-    cpdLimits$rtMax <- NA
-    cpdLimits$rtPeak <- NA
-    # load if available
-    if(file.exists(file))
-      load(file)
-    cpdLimits <<- cpdLimits
+    if(input$rtLoad > 0)
+    {
+      print("rtload happened")
+      file <- "results/cpdLimits.RData"
+      cpdLimits <- cpdList[,c(),drop=FALSE]
+      cpdLimits$rtMin <- NA
+      cpdLimits$rtMax <- NA
+      cpdLimits$rtPeak <- NA
+      # load if available
+      if(file.exists(file))
+        load(file)
+      cpdLimits <<- cpdLimits
+      isolate({pool$rtLoaded <- pool$rtLoaded + 1})
+    }
   })
+  
+  
+  
   observe({
     # When limits or peak are changed, set the value in the cpdLimits table
     input$rtLimits
@@ -268,6 +279,87 @@ server <- function(input, output, session) {
     } # for panels.y
 
   }) # observe  
+
+
+  # save and load settings
+  observe({
+    input$settingsSave
+    
+    if(input$settingsSave > 0)
+    {
+      isolate({
+        if(file.exists("results/RmvSettings.RData"))
+          load("results/RmvSettings.RData")
+        else
+          RmvSettings <- list()
+        newSettingsName <- input$settingsName
+        newSettings <- list(
+          panel.x = input$panel.x,
+          panel.y = input$panel.y,
+          panel.w = input$panel.w,
+          panel.h = input$panel.h,
+          rangeSel = input$rangeSel
+        )
+        for(panels.y in 1:input$panel.y) {
+          for(panels.x in 1:input$panel.x) {
+            inputname <- paste("file",panels.x,panels.y, sep="-")
+            newSettings[[inputname]] <- input[[inputname]]
+          }
+        }
+        RmvSettings[[newSettingsName]] <- newSettings
+        updateSelectInput(session,"settingsList", choices=names(RmvSettings), selected=newSettingsName)
+        save(RmvSettings, file="results/RmvSettings.RData")
+      })
+    }
+  })
+  # save and load settings
+  observe({
+    input$settingsLoad
+    
+    if(input$settingsLoad > 0)
+    {
+      isolate({
+        load("results/RmvSettings.RData")
+        newSettingsName <- input$settingsList
+        settings <- RmvSettings[[newSettingsName]]
+        updateSliderInput(session, "panel.x", value=settings$panel.x)
+        updateSliderInput(session, "panel.y", value=settings$panel.y)
+        updateSliderInput(session, "panel.w", value=settings$panel.w)
+        updateSliderInput(session, "panel.h", value=settings$panel.h)
+        updateRadioButtons(session, "rangeSel", selected=settings$rangeSel)
+        
+        for(panels.y in 1:settings$panel.y) {
+          for(panels.x in 1:settings$panel.x) {
+            inputname <- paste("file",panels.x,panels.y, sep="-")
+            updateSelectInput(session, inputname, selected=settings[[inputname]])
+          }
+        }
+      })
+    }
+  })
+
+# delete settings
+observe({
+  input$settingsDel
+  
+  if(input$settingsDel > 0)
+  {
+    isolate({
+      load("results/RmvSettings.RData")
+      newSettingsName <- input$settingsList
+      RmvSettings[[newSettingsName]] <- NULL
+      updateSelectInput(session,"settingsList", choices=names(RmvSettings))
+      save(RmvSettings, file="results/RmvSettings.RData")
+      
+    })
+  }
+})
+  
+  if(file.exists("results/RmvSettings.RData"))
+  {
+    load("results/RmvSettings.RData")
+    updateSelectInput(session,"settingsList", choices=names(RmvSettings))
+  }
 }
 
 ui <- fluidPage(
@@ -288,8 +380,11 @@ ui <- fluidPage(
                  uiOutput("plots")
                  ),
         tabPanel("Setup",
-                 actionButton("panelLoad", "load layout"),
-                 actionButton("panelSave", "save layout"),
+                 actionButton("settingsLoad", "load layout"),
+                 actionButton("settingsDel", "delete layout"),
+                 selectInput("settingsList","Layout", c()),
+                 actionButton("settingsSave", "save layout"),
+                 textInput("settingsName", "Name",""),
                  sliderInput("panel.x", "Horiz. panels", 1,8,3),
                  sliderInput("panel.y", "Vert. panels", 1,8,3),
                  sliderInput("panel.w", "Panel width", 250,600,300),
